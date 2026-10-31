@@ -31,12 +31,18 @@ jobs:
       - name: Smoke test container
         shell: bash
         run: |
-          docker run -d --name site-smoke -p 8080:80 ci-cd-site:test
-          trap 'docker rm -f site-smoke >/dev/null 2>&1 || true' EXIT
-          curl --retry 10 --retry-delay 1 --retry-connrefused \
+          docker run -d --name site-smoke -p 127.0.0.1:8080:80 ci-cd-site:test
+
+          trap 'docker logs site-smoke || true; docker rm -f site-smoke >/dev/null 2>&1 || true' EXIT
+
+          sleep 2
+
+          curl --retry 10 --retry-delay 1 --retry-all-errors \
             --fail --silent --show-error \
-            http://localhost:8080/ -o smoke.html
+            http://127.0.0.1:8080/ -o smoke.html
+
           echo 'Command: grep -q SITE_OK smoke.html'
+
           if grep -q 'SITE_OK' smoke.html; then
             echo 'grep exit code: 0'
             echo 'OK'
