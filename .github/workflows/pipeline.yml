@@ -1,0 +1,78 @@
+name: Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Lint HTML
+        run: npx --yes html-validate@11.17.0 index.html
+
+      - name: Build Docker image
+        run: docker build -t ci-cd-site:test .
+
+      - name: Smoke test container
+        shell: bash
+        run: |
+          docker run -d --name site-smoke -p 8080:80 ci-cd-site:test
+          trap 'docker rm -f site-smoke >/dev/null 2>&1 || true' EXIT
+          curl --retry 10 --retry-delay 1 --retry-connrefused \
+            --fail --silent --show-error \
+            http://localhost:8080/ -o smoke.html
+          echo 'Command: grep -q SITE_OK smoke.html'
+          if grep -q 'SITE_OK' smoke.html; then
+            echo 'grep exit code: 0'
+            echo 'OK'
+          else
+            echo 'grep exit code: 1'
+            exit 1
+          fi
+
+  release:
+    name: release
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set lowercase image name
+        shell: bash
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
